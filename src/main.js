@@ -410,6 +410,25 @@ function initAudio() {
   if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (audio.ctx.state === 'suspended') audio.ctx.resume();
   startAmbient();
+  startBGM();
+}
+// AI-generated horror theme (Higgsfield sonilo_music), looped under the ambience
+let bgmStarted = false;
+async function startBGM() {
+  if (bgmStarted || !audio.ctx) return;
+  bgmStarted = true;
+  try {
+    const res = await fetch('assets/audio/nightfall_theme.m4a');
+    if (!res.ok) return;
+    const buf = await audio.ctx.decodeAudioData(await res.arrayBuffer());
+    const src = audio.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const gain = audio.ctx.createGain();
+    gain.gain.value = 0.28;
+    src.connect(gain).connect(audio.ctx.destination);
+    src.start();
+  } catch (e) { /* BGM is optional — play on without it */ }
 }
 function startAmbient() {
   if (audio.ambient || !audio.ctx) return;
@@ -643,10 +662,99 @@ function removeEnemy(enemy) {
   if (j !== -1) enemyHitboxes.splice(j, 1);
 }
 
+// ---------------------------------------------------------------- mission --
+const LORE = [
+  '기록 #1 — 첫날 밤. 나무들이… 움직인 것 같다. 착각이길 바란다.',
+  '기록 #2 — 김 박사가 사라졌다. 텐트 안에는 뼈 하나만 남아 있었다.',
+  '기록 #3 — 그것들은 빛을 두려워한다. 손전등을 절대 끄지 마라.',
+  '기록 #4 — 발전기만 살리면 송신기가 작동한다. 감시탑으로 가야 한다.',
+  '기록 #5 — 우리는 너무 늦었다. 부디 당신은… 새벽을 보길.',
+];
+const GEN_POS = new THREE.Vector3(0, terrainHeight(2.8, -48.5), -48.5);
+const mission = {
+  phase: 'collect',      // collect -> generator -> defend -> won
+  relics: [],
+  collected: 0,
+  total: 5,
+  genProgress: 0,
+  genTime: 3,
+  defendT: 90,
+  loreTimer: 0,
+};
+
+const relicBeamMat = new THREE.MeshBasicMaterial({
+  color: 0xffb35c, transparent: true, opacity: 0.14,
+  blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+});
+function makeRelic(x, z) {
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.22, 0.12),
+    new THREE.MeshStandardMaterial({ color: 0x2c2c30, roughness: 0.5, metalness: 0.6 }));
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.22, 0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffc070 }));
+  screen.position.set(0, 0.02, 0.065);
+  const light = new THREE.PointLight(0xffab50, 5, 9, 1.7);
+  light.position.y = 0.6;
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 26, 10, 1, true), relicBeamMat);
+  beam.position.y = 13;
+  g.add(box, screen, light, beam);
+  g.position.set(x, terrainHeight(x, z) + 0.55, z);
+  g.userData.baseY = g.position.y;
+  scene.add(g);
+  return g;
+}
+function setupMission() {
+  for (const r of mission.relics) scene.remove(r);
+  mission.relics = [];
+  mission.phase = 'collect';
+  mission.collected = 0;
+  mission.genProgress = 0;
+  mission.defendT = 90;
+  const spots = scatter(mission.total, 45,
+    (x, y, z) => Math.hypot(x, z) < 165 && y > WATER_LEVEL + 1.5 && slopeAt(x, z) < 0.6);
+  while (spots.length < mission.total) spots.push({ x: 60 + spots.length * 15, z: 60 });
+  for (const p of spots) mission.relics.push(makeRelic(p.x, p.z));
+  genLamp.material.color.setHex(0xff2818);
+  setObjective('기록 회수', `조사대의 기록장치를 찾아라 — <b>0 / ${mission.total}</b>`);
+}
+
+// generator console at the watchtower base
+const genConsole = new THREE.Mesh(
+  new THREE.BoxGeometry(1.1, 1.3, 0.7),
+  new THREE.MeshStandardMaterial({ map: TEX.metalBC, normalMap: TEX.metalN, color: 0x9aa0aa, roughness: 0.6, metalness: 0.6 }));
+genConsole.position.copy(GEN_POS).add(new THREE.Vector3(0, 0.65, 0));
+genConsole.castShadow = true;
+scene.add(genConsole);
+const genLamp = new THREE.Mesh(
+  new THREE.SphereGeometry(0.09, 10, 10),
+  new THREE.MeshBasicMaterial({ color: 0xff2818 }));
+genLamp.position.copy(GEN_POS).add(new THREE.Vector3(0, 1.42, 0));
+scene.add(genLamp);
+const genLight = new THREE.PointLight(0xff3020, 3, 10, 1.7);
+genLight.position.copy(genLamp.position).add(new THREE.Vector3(0, 0.4, 0));
+scene.add(genLight);
+
+function setObjective(title, descHTML) {
+  document.getElementById('obj-title').textContent = 'MISSION — ' + title;
+  document.getElementById('obj-desc').innerHTML = descHTML;
+}
+function showLore(text) {
+  const el = document.getElementById('lore');
+  el.textContent = text;
+  el.style.opacity = '1';
+  mission.loreTimer = 5;
+}
+
 // ------------------------------------------------------------------ state --
 const state = {
   playing: false,
   dead: false,
+  won: false,
+  interactLatch: false,
+  touchInteract: false,
+  defendSpawnT: 0,
   time: 0,
   hp: 100,
   lastDamage: -99,
@@ -678,20 +786,68 @@ const ui = {
   mag: document.getElementById('mag'),
   hitmarker: document.getElementById('hitmarker'),
   vignette: document.getElementById('vignette'),
+  waypoint: document.getElementById('waypoint'),
+  wpDist: document.querySelector('#waypoint .wp-dist'),
+  iPrompt: document.getElementById('interact-prompt'),
+  iText: document.getElementById('interact-text'),
+  iBar: document.getElementById('interact-bar'),
+  iFill: document.getElementById('interact-fill'),
+  lore: document.getElementById('lore'),
+  btnInteract: document.getElementById('btn-interact'),
 };
 
 function resetGame() {
   for (const e of [...enemies]) removeEnemy(e);
   Object.assign(state, {
-    dead: false, hp: 100, kills: 0, wave: 1, maxEnemies: 6,
+    dead: false, won: false, hp: 100, kills: 0, wave: 1, maxEnemies: 6,
     mag: 30, reloading: 0, fireCooldown: 0, recoil: 0,
-    yaw: 0, pitch: 0, vy: 0, lastDamage: -99,
+    yaw: 0, pitch: 0, vy: 0, lastDamage: -99, defendSpawnT: 0,
   });
   state.respawnQueue.length = 0;
   camera.position.set(0, terrainHeight(0, 8) + EYE_HEIGHT, 8);
   document.getElementById('kills').textContent = '0';
   document.getElementById('wave').textContent = '1';
+  ui.deathStats.style.display = 'none';
+  setupMission();
   for (let i = 0; i < state.maxEnemies; i++) spawnEnemy(camera.position);
+}
+
+function collectRelic(relic) {
+  scene.remove(relic);
+  mission.relics.splice(mission.relics.indexOf(relic), 1);
+  mission.collected++;
+  playTone(880, 0.15, 0.2, 'sine', 1320);
+  playTone(440, 0.3, 0.12, 'triangle');
+  showLore(LORE[Math.min(mission.collected - 1, LORE.length - 1)]);
+  if (mission.collected >= mission.total) {
+    mission.phase = 'generator';
+    setObjective('발전기 가동', '감시탑 아래 <b>발전기</b>를 가동해 송신기를 살려라');
+  } else {
+    setObjective('기록 회수', `조사대의 기록장치를 찾아라 — <b>${mission.collected} / ${mission.total}</b>`);
+  }
+}
+function startDefend() {
+  mission.phase = 'defend';
+  genLamp.material.color.setHex(0x3aff55);
+  genLight.color.setHex(0x35e050);
+  playTone(60, 1.2, 0.3, 'sawtooth', 120);
+  playTone(240, 0.6, 0.15, 'square', 480);
+  showLore('발전기 가동 — 송신 시작. 새벽까지 그들이 몰려온다.');
+  state.maxEnemies = 15;
+  for (let i = 0; i < 5; i++) spawnEnemy(camera.position);
+}
+function winGame() {
+  mission.phase = 'won';
+  state.won = true;
+  playTone(523, 0.4, 0.2, 'triangle');
+  setTimeout(() => playTone(659, 0.4, 0.2, 'triangle'), 250);
+  setTimeout(() => playTone(784, 0.8, 0.25, 'triangle'), 500);
+  ui.deathStats.style.display = 'block';
+  ui.deathStats.style.color = '#a8e8a0';
+  ui.deathStats.textContent = `새벽이 밝았다 — 구조 신호 송신 완료. 처치 ${state.kills} · 기록 ${mission.total}/${mission.total}`;
+  setObjective('완료', '생존 성공 — 구조대가 오고 있다');
+  if (IS_TOUCH || !document.pointerLockElement) pauseToMenu();
+  else document.exitPointerLock();
 }
 
 // ------------------------------------------------------------------ input --
@@ -699,11 +855,11 @@ function pauseToMenu() {
   state.playing = false;
   state.mouseDown = false;
   ui.overlay.classList.remove('hidden');
-  ui.playBtn.textContent = state.dead ? 'REDEPLOY' : 'RESUME';
+  ui.playBtn.textContent = (state.dead || state.won) ? 'REDEPLOY' : 'RESUME';
 }
 ui.playBtn.addEventListener('click', () => {
   initAudio();
-  if (state.dead || enemies.length === 0) resetGame();
+  if (state.dead || state.won || enemies.length === 0) resetGame();
   if (IS_TOUCH) {
     state.playing = true;
     ui.overlay.classList.add('hidden');
@@ -716,7 +872,7 @@ document.addEventListener('pointerlockchange', () => {
   state.playing = document.pointerLockElement === renderer.domElement;
   ui.overlay.classList.toggle('hidden', state.playing);
   if (!state.playing) {
-    ui.playBtn.textContent = state.dead ? 'REDEPLOY' : 'RESUME';
+    ui.playBtn.textContent = (state.dead || state.won) ? 'REDEPLOY' : 'RESUME';
     state.mouseDown = false;
   }
 });
@@ -793,6 +949,7 @@ if (IS_TOUCH) {
     }
   });
   bind('btn-pause', () => pauseToMenu());
+  bind('btn-interact', () => { state.touchInteract = true; }, () => { state.touchInteract = false; });
 }
 document.addEventListener('mousemove', (e) => {
   if (!state.playing) return;
@@ -868,8 +1025,9 @@ function damagePlayer(amount) {
     state.hp = 0;
     state.dead = true;
     ui.deathStats.style.display = 'block';
-    ui.deathStats.textContent = `그들에게 잡혔습니다 — 처치 ${state.kills} · 밤 ${state.wave}`;
-    if (IS_TOUCH) pauseToMenu();
+    ui.deathStats.style.color = '#ff9a88';
+    ui.deathStats.textContent = `그들에게 잡혔습니다 — 처치 ${state.kills} · 기록 ${mission.collected}/${mission.total}`;
+    if (IS_TOUCH || !document.pointerLockElement) pauseToMenu();
     else document.exitPointerLock();
   }
 }
@@ -1023,6 +1181,93 @@ function update(dt) {
     e.obj.lookAt(camera.position.x, p.y, camera.position.z);
   }
 
+  // --- mission
+  let wpTarget = null, wpLift = 1.6, interact = null;
+  for (let i = 0; i < mission.relics.length; i++) {
+    const r = mission.relics[i];
+    r.rotation.y += dt * 0.8;
+    r.position.y = r.userData.baseY + Math.sin(state.time * 2 + i * 1.7) * 0.1;
+  }
+  if (mission.loreTimer > 0) {
+    mission.loreTimer -= dt;
+    if (mission.loreTimer <= 0) ui.lore.style.opacity = '0';
+  }
+  if (state.playing && !state.dead && !state.won) {
+    if (mission.phase === 'collect') {
+      let nearest = null, nd = 1e9;
+      for (const r of mission.relics) {
+        const d = r.position.distanceTo(camera.position);
+        if (d < nd) { nd = d; nearest = r; }
+      }
+      if (nearest) {
+        wpTarget = nearest.position;
+        if (nd < 3.2) interact = { label: '기록 회수', relic: nearest };
+      }
+    } else if (mission.phase === 'generator') {
+      wpTarget = genLamp.position;
+      wpLift = 0.8;
+      if (camera.position.distanceTo(genConsole.position) < 3.6) {
+        interact = { label: '발전기 가동 — 길게 누르기', hold: true };
+      }
+    } else if (mission.phase === 'defend') {
+      mission.defendT -= dt;
+      setObjective('생존', `구조 신호 송신 중 — <b>${Math.max(0, Math.ceil(mission.defendT))}초</b>만 버텨라`);
+      state.defendSpawnT -= dt;
+      if (state.defendSpawnT <= 0) {
+        state.defendSpawnT = 3.2;
+        if (enemies.length < state.maxEnemies) spawnEnemy(camera.position);
+      }
+      if (mission.defendT <= 0) winGame();
+    }
+  }
+
+  const wantInteract = (keys.KeyE || state.touchInteract) && state.playing && !state.dead;
+  if (interact) {
+    ui.iPrompt.style.display = 'block';
+    ui.iText.innerHTML = IS_TOUCH ? interact.label : `<kbd>E</kbd>${interact.label}`;
+    if (IS_TOUCH) ui.btnInteract.style.display = 'block';
+    if (interact.hold) {
+      ui.iBar.style.display = 'block';
+      if (wantInteract) {
+        mission.genProgress += dt;
+        if (mission.genProgress >= mission.genTime) { mission.genProgress = 0; startDefend(); }
+      } else {
+        mission.genProgress = Math.max(0, mission.genProgress - dt * 1.5);
+      }
+      ui.iFill.style.width = `${(mission.genProgress / mission.genTime) * 100}%`;
+    } else {
+      ui.iBar.style.display = 'none';
+      if (wantInteract && !state.interactLatch) {
+        state.interactLatch = true;
+        collectRelic(interact.relic);
+      }
+    }
+  } else {
+    ui.iPrompt.style.display = 'none';
+    if (IS_TOUCH) ui.btnInteract.style.display = 'none';
+  }
+  if (!wantInteract) state.interactLatch = false;
+
+  // waypoint marker projected to the screen (clamped to edges when off-view)
+  if (wpTarget && state.playing && !state.dead && !state.won) {
+    camera.updateMatrixWorld();
+    const v = wpTarget.clone();
+    v.y += wpLift;
+    const dist = Math.round(v.distanceTo(camera.position));
+    v.project(camera);
+    let sx = (v.x * 0.5 + 0.5) * innerWidth;
+    let sy = (-v.y * 0.5 + 0.5) * innerHeight;
+    if (v.z > 1) { sx = innerWidth - sx; sy = innerHeight - 70; }
+    sx = THREE.MathUtils.clamp(sx, 44, innerWidth - 44);
+    sy = THREE.MathUtils.clamp(sy, 70, innerHeight - 110);
+    ui.waypoint.style.display = 'block';
+    ui.waypoint.style.left = `${sx}px`;
+    ui.waypoint.style.top = `${sy}px`;
+    ui.wpDist.textContent = `${dist}m`;
+  } else {
+    ui.waypoint.style.display = 'none';
+  }
+
   updateParticles(dt);
   updateTracers(dt);
 
@@ -1039,6 +1284,7 @@ renderer.setAnimationLoop(() => {
 // ------------------------------------------------------------- bootstrap --
 Promise.all([plantForest(), loadSkeletons()])
   .then(() => {
+    setupMission();
     for (let i = 0; i < state.maxEnemies; i++) spawnEnemy(camera.position);
     ui.playBtn.disabled = false;
     ui.playBtn.textContent = 'ENTER THE DARK';
@@ -1050,4 +1296,6 @@ Promise.all([plantForest(), loadSkeletons()])
   });
 
 // debug handle for automated tests
-window.__game = { scene, camera, renderer, terrain, state, enemies, protos, flashlight };
+window.__game = { scene, camera, renderer, terrain, state, enemies, protos, flashlight, __keys: keys };
+window.__mission = mission;
+mission.genPos = GEN_POS;
