@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FABLE FRONTIER — Open World FPS Demo</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .hud { font-family: "Segoe UI", system-ui, sans-serif; color: #e8f0e8; user-select: none; }
+
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: 0.9;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ""; position: absolute; background: #d7ffd7;
+    box-shadow: 0 0 4px rgba(0,0,0,.8);
+  }
+  #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 100% 32%, 0 32%, 0 68%, 100% 68%, 100% 100%, 0 100%); }
+  #crosshair::after  { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); clip-path: polygon(0 0, 32% 0, 32% 100%, 0 100%, 68% 0, 100% 0, 100% 100%, 68% 100%); }
+
+  #hitmarker {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%) rotate(45deg);
+    font-size: 26px; font-weight: 700; color: #ffdd55; text-shadow: 0 0 6px #000;
+    opacity: 0; pointer-events: none; transition: opacity 60ms linear;
+  }
+
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(200,20,20,.55) 100%);
+    transition: opacity 150ms linear;
+  }
+
+  #hud-bottom {
+    position: fixed; left: 0; right: 0; bottom: 0; display: flex;
+    justify-content: space-between; align-items: flex-end; padding: 18px 26px;
+    pointer-events: none;
+  }
+  .panel {
+    background: rgba(8, 14, 10, 0.55); border: 1px solid rgba(160, 220, 170, 0.25);
+    border-radius: 8px; padding: 10px 16px; backdrop-filter: blur(3px);
+  }
+  #hpbar-wrap { width: 240px; }
+  #hpbar-label { font-size: 12px; letter-spacing: 2px; opacity: .8; margin-bottom: 5px; }
+  #hpbar { height: 10px; background: rgba(255,255,255,.12); border-radius: 5px; overflow: hidden; }
+  #hpbar-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #45d06a, #a5e84a); border-radius: 5px; transition: width 120ms ease-out; }
+  #ammo { font-size: 30px; font-weight: 700; text-align: right; line-height: 1; }
+  #ammo small { font-size: 14px; font-weight: 400; opacity: .7; }
+  #ammo .reloading { color: #ffcc44; font-size: 16px; }
+
+  #hud-top {
+    position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: center;
+    padding: 14px; pointer-events: none;
+  }
+  #score { font-size: 15px; letter-spacing: 1px; }
+  #score b { color: #ffd970; font-size: 18px; }
+
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(4, 10, 6, 0.55); backdrop-filter: blur(2px);
+    transition: opacity 250ms ease; z-index: 10;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay h1 {
+    font-size: clamp(38px, 7vw, 72px); margin: 0 0 6px; letter-spacing: 6px;
+    color: #eaffe9; text-shadow: 0 0 24px rgba(90, 220, 120, .5);
+  }
+  #overlay h2 { font-weight: 400; font-size: 16px; letter-spacing: 3px; opacity: .75; margin: 0 0 34px; }
+  #overlay .controls {
+    font-size: 14px; line-height: 2; opacity: .85; margin-bottom: 34px;
+  }
+  #overlay .controls kbd {
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 4px; padding: 1px 8px; margin: 0 3px; font-family: inherit;
+  }
+  #play-btn {
+    font-size: 18px; letter-spacing: 3px; padding: 14px 52px; cursor: pointer;
+    color: #06130a; background: linear-gradient(180deg, #8cf2a4, #4ec973);
+    border: none; border-radius: 8px; font-weight: 700;
+    box-shadow: 0 0 30px rgba(90, 220, 120, .35);
+  }
+  #play-btn:hover { filter: brightness(1.1); }
+  #death-stats { font-size: 18px; margin-bottom: 26px; color: #ffb0a0; display: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud" id="hud-top"><div class="panel" id="score">ELIMINATIONS <b id="kills">0</b>&nbsp;&nbsp;·&nbsp;&nbsp;WAVE <b id="wave">1</b></div></div>
+<div id="crosshair"></div>
+<div id="hitmarker">+</div>
+<div id="vignette"></div>
+<div class="hud" id="hud-bottom">
+  <div class="panel" id="hpbar-wrap">
+    <div id="hpbar-label">INTEGRITY</div>
+    <div id="hpbar"><div id="hpbar-fill"></div></div>
+  </div>
+  <div class="panel"><div id="ammo"><span id="mag">30</span><small> / ∞</small></div></div>
+</div>
+
+<div class="hud" id="overlay">
+  <h1>FABLE FRONTIER</h1>
+  <h2>OPEN WORLD FPS DEMO — BUILT BY CLAUDE</h2>
+  <div id="death-stats"></div>
+  <div class="controls">
+    <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>Shift</kbd> 질주 &nbsp; <kbd>Space</kbd> 점프<br>
+    <kbd>마우스</kbd> 조준 &nbsp; <kbd>좌클릭</kbd> 사격 &nbsp; <kbd>R</kbd> 재장전 &nbsp; <kbd>Esc</kbd> 일시정지
+  </div>
+  <button id="play-btn">DEPLOY</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/three.module.js",
+    "three/addons/objects/Sky.js": "./lib/Sky.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
