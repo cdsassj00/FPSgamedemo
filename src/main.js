@@ -55,6 +55,36 @@ document.getElementById('app').appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbcd3de, 120, 460);
 
+// ---- AI-generated PBR textures (Higgsfield, post-processed to seamless) ----
+const texLoader = new THREE.TextureLoader();
+const ANISO = new URLSearchParams(location.search).has('noaniso')
+  ? 1 : Math.min(8, renderer.capabilities.getMaxAnisotropy());
+function loadTex(file, repeat, srgb = true) {
+  const t = texLoader.load(`assets/textures/${file}`);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if (repeat) t.repeat.set(repeat[0], repeat[1]);
+  t.anisotropy = ANISO;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const TEX = {
+  grassBC: loadTex('grass_basecolor.jpg', [110, 110]),
+  grassN: loadTex('grass_normal.jpg', [110, 110], false),
+  rockBC: loadTex('rock_basecolor.jpg'),
+  rockN: loadTex('rock_normal.jpg', null, false),
+  sandBC: loadTex('sand_basecolor.jpg'),
+  sandN: loadTex('sand_normal.jpg', null, false),
+  concreteBC: loadTex('concrete_basecolor.jpg'),
+  concreteN: loadTex('concrete_normal.jpg', null, false),
+  barkBC: loadTex('bark_basecolor.jpg', [2, 1]),
+  barkN: loadTex('bark_normal.jpg', [2, 1], false),
+  foliageBC: loadTex('foliage_basecolor.jpg', [3, 2]),
+  foliageN: loadTex('foliage_normal.jpg', [3, 2], false),
+  metalBC: loadTex('metal_basecolor.jpg'),
+  metalN: loadTex('metal_normal.jpg', null, false),
+  waterN: loadTex('sand_normal.jpg', [50, 50], false),
+};
+
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 900);
 
 // sky + sun
@@ -86,9 +116,7 @@ terrainGeo.rotateX(-Math.PI / 2);
 {
   const pos = terrainGeo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const grass = new THREE.Color(0x5f8c45), dry = new THREE.Color(0x8f9c56);
-  const rock = new THREE.Color(0x77746c), sand = new THREE.Color(0xb5a878);
-  const snow = new THREE.Color(0xe8ecec), tmp = new THREE.Color();
+  const splat = new Float32Array(pos.count * 4);   // grass / rock / sand / snow
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const y = terrainHeight(x, z);
@@ -96,36 +124,58 @@ terrainGeo.rotateX(-Math.PI / 2);
     const e = 1.5;
     const slope = Math.abs(terrainHeight(x + e, z) - terrainHeight(x - e, z)) / (2 * e)
                 + Math.abs(terrainHeight(x, z + e) - terrainHeight(x, z - e)) / (2 * e);
-    tmp.copy(grass).lerp(dry, (noise2(x * 0.06, z * 0.06) * 0.6 + noise2(x * 0.013, z * 0.013) * 0.4) * 0.55);
-    if (y < WATER_LEVEL + 2.5) tmp.lerp(sand, THREE.MathUtils.smoothstep(WATER_LEVEL + 2.5 - y, 0, 2.5));
-    tmp.lerp(rock, THREE.MathUtils.smoothstep(slope, 0.45, 0.9));
-    if (y > 13) tmp.lerp(snow, THREE.MathUtils.smoothstep(y, 13, 19));
-    colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+    const sandW = y < WATER_LEVEL + 2.5 ? THREE.MathUtils.smoothstep(WATER_LEVEL + 2.5 - y, 0, 2.5) : 0;
+    const rockW = THREE.MathUtils.smoothstep(slope, 0.4, 0.85) * (1 - sandW);
+    const snowW = y > 13 ? THREE.MathUtils.smoothstep(y, 13, 19) * (1 - rockW * 0.4) : 0;
+    const grassW = Math.max(0, 1 - sandW - rockW - snowW);
+    splat[i * 4] = grassW; splat[i * 4 + 1] = rockW;
+    splat[i * 4 + 2] = sandW; splat[i * 4 + 3] = snowW;
+    // subtle brightness variation so large fields don't read uniform
+    const v = 0.8 + 0.2 * noise2(x * 0.05 + 5.1, z * 0.05 + 9.4);
+    colors[i * 3] = v; colors[i * 3 + 1] = v; colors[i * 3 + 2] = v * 0.98;
   }
   terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  terrainGeo.setAttribute('splat', new THREE.BufferAttribute(splat, 4));
   terrainGeo.computeVertexNormals();
 }
-// tiled grayscale noise so nearby ground has visible grain
-const detailTex = (() => {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(256, 256);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = 212 + Math.floor(Math.random() * 34);
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(180, 180);
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-})();
-const terrain = new THREE.Mesh(terrainGeo,
-  new THREE.MeshStandardMaterial({ vertexColors: true, map: detailTex, roughness: 0.95, metalness: 0 }));
+// splat-mapped terrain: grass/rock/sand textures blended by the vertex
+// weights, snow as a flat tone; normals blended with the same weights
+const terrainMat = new THREE.MeshStandardMaterial({
+  map: TEX.grassBC, normalMap: TEX.grassN, vertexColors: true,
+  roughness: 0.95, metalness: 0,
+});
+terrainMat.normalScale.set(0.9, 0.9);
+terrainMat.onBeforeCompile = (shader) => {
+  shader.uniforms.rockMap = { value: TEX.rockBC };
+  shader.uniforms.rockNormalMap = { value: TEX.rockN };
+  shader.uniforms.sandMap = { value: TEX.sandBC };
+  shader.uniforms.sandNormalMap = { value: TEX.sandN };
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute vec4 splat;\nvarying vec4 vSplat;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = splat;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+uniform sampler2D rockMap;
+uniform sampler2D rockNormalMap;
+uniform sampler2D sandMap;
+uniform sampler2D sandNormalMap;
+varying vec4 vSplat;
+vec4 splatW;`)
+    .replace('#include <map_fragment>', `
+splatW = vSplat / max(vSplat.x + vSplat.y + vSplat.z + vSplat.w, 1e-4);
+vec4 texMix = texture2D(map, vMapUv) * splatW.x
+            + texture2D(rockMap, vMapUv * 0.35) * splatW.y
+            + texture2D(sandMap, vMapUv * 0.6) * splatW.z
+            + vec4(0.85, 0.87, 0.92, 1.0) * splatW.w;
+diffuseColor *= texMix;`)
+    .replace('#include <normal_fragment_maps>', `
+vec3 mapN = ( texture2D(normalMap, vNormalMapUv).xyz * (splatW.x + splatW.w)
+            + texture2D(rockNormalMap, vNormalMapUv * 0.35).xyz * splatW.y
+            + texture2D(sandNormalMap, vNormalMapUv * 0.6).xyz * splatW.z ) * 2.0 - 1.0;
+mapN.xy *= normalScale;
+normal = normalize( tbn * mapN );`);
+};
+const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.receiveShadow = true;
 scene.add(terrain);
 
@@ -135,6 +185,7 @@ const water = new THREE.Mesh(
   new THREE.MeshStandardMaterial({
     color: 0x2b6f9e, transparent: true, opacity: 0.78,
     roughness: 0.15, metalness: 0.4,
+    normalMap: TEX.waterN, normalScale: new THREE.Vector2(0.25, 0.25),
   }));
 water.rotation.x = -Math.PI / 2;
 water.position.y = WATER_LEVEL;
@@ -167,8 +218,8 @@ function slopeAt(x, z) {
   trunkGeo.translate(0, 1.2, 0);
   const leafGeo = new THREE.ConeGeometry(1.7, 4.6, 7);
   leafGeo.translate(0, 4.2, 0);
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5d4429, roughness: 1 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3a7034, roughness: 1 });
+  const trunkMat = new THREE.MeshStandardMaterial({ map: TEX.barkBC, normalMap: TEX.barkN, roughness: 1 });
+  const leafMat = new THREE.MeshStandardMaterial({ map: TEX.foliageBC, normalMap: TEX.foliageN, roughness: 1 });
   const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, spots.length);
   const leaves = new THREE.InstancedMesh(leafGeo, leafMat, spots.length);
   trunks.castShadow = leaves.castShadow = true;
@@ -189,7 +240,7 @@ function slopeAt(x, z) {
 {
   const spots = scatter(90, 24, (x, y) => y > WATER_LEVEL + 0.5);
   const rockGeo = new THREE.IcosahedronGeometry(1, 0);
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8a877e, roughness: 1, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ map: TEX.rockBC, normalMap: TEX.rockN, roughness: 1, flatShading: true });
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, spots.length);
   rocks.castShadow = rocks.receiveShadow = true;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
@@ -204,8 +255,15 @@ function slopeAt(x, z) {
 
 // abandoned outpost near spawn
 {
-  const concrete = new THREE.MeshStandardMaterial({ color: 0x9b9689, roughness: 0.9 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x3c3f45, roughness: 0.8 });
+  const concrete = new THREE.MeshStandardMaterial({ map: TEX.concreteBC, normalMap: TEX.concreteN, roughness: 0.9 });
+  const dark = new THREE.MeshStandardMaterial({ map: TEX.metalBC, normalMap: TEX.metalN, color: 0x8a8d92, roughness: 0.8 });
+  // tile the concrete roughly per 3.5m so big and small walls read the same
+  const scaleBoxUV = (geo, w, h, d) => {
+    const uv = geo.attributes.uv;
+    const s = Math.max(w, d) / 3.5, t = Math.max(h, 3) / 3.5;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * s, uv.getY(i) * t);
+    return geo;
+  };
   const outpost = new THREE.Group();
   const buildings = [
     [28, 6, -34, 10, 5, 8], [40, 6, -26, 7, 8, 7], [33, 6, -18, 6, 4, 12],
@@ -213,7 +271,7 @@ function slopeAt(x, z) {
   ];
   for (const [x, , z, w, h, d] of buildings) {
     const y = terrainHeight(x, z);
-    const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), concrete);
+    const box = new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w, h, d), w, h, d), concrete);
     box.position.set(x, y + h / 2 - 0.3, z);
     box.castShadow = box.receiveShadow = true;
     outpost.add(box);
@@ -231,7 +289,7 @@ function slopeAt(x, z) {
     leg.castShadow = true;
     outpost.add(leg);
   }
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 5), concrete);
+  const cabin = new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(5, 3, 5), 5, 3, 5), concrete);
   cabin.position.set(0, ty + 13.5, -52);
   cabin.castShadow = true;
   outpost.add(cabin);
@@ -328,7 +386,8 @@ const sfx = {
 const gun = new THREE.Group();
 {
   const metal = new THREE.MeshStandardMaterial({
-    color: 0x565d66, roughness: 0.5, metalness: 0.4,
+    map: TEX.metalBC, normalMap: TEX.metalN,
+    color: 0xb8bdc4, roughness: 0.5, metalness: 0.4,
     emissive: 0x3a3f47, emissiveIntensity: 0.55,
   });
   const accent = new THREE.MeshStandardMaterial({ color: 0x71d68a, roughness: 0.4, metalness: 0.3, emissive: 0x1f4a2a });
@@ -380,7 +439,10 @@ function updateTracers(dt) {
 const enemies = [];
 const enemyBodies = [];   // meshes for raycasting
 const droneGeo = new THREE.OctahedronGeometry(0.65, 0);
-const droneMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.4, metalness: 0.8, flatShading: true });
+const droneMat = new THREE.MeshStandardMaterial({
+  map: TEX.metalBC, normalMap: TEX.metalN,
+  color: 0x9aa0aa, roughness: 0.4, metalness: 0.8, flatShading: true,
+});
 const eyeGeo = new THREE.SphereGeometry(0.18, 12, 12);
 const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff3020, emissive: 0xff2010, emissiveIntensity: 2.5 });
 const ringGeo = new THREE.TorusGeometry(0.85, 0.05, 8, 24);
@@ -736,8 +798,9 @@ function update(dt) {
   updateParticles(dt);
   updateTracers(dt);
 
-  // gentle water shimmer
+  // gentle water shimmer + drifting ripples
   water.position.y = WATER_LEVEL + Math.sin(state.time * 0.8) * 0.08;
+  TEX.waterN.offset.set(state.time * 0.008, state.time * 0.005);
 }
 
 renderer.setAnimationLoop(() => {

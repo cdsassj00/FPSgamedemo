@@ -1,9 +1,10 @@
 # FABLE FRONTIER — Open World FPS Demo
 
-브라우저에서 바로 실행되는 오픈 월드 FPS 데모입니다. Claude(Fable 5)가 Three.js로 제작했으며,
-**외부 에셋이 하나도 없습니다** — 지형·나무·건물·드론·총기·텍스처·사운드 전부 코드로 절차 생성됩니다.
+브라우저에서 바로 실행되는 오픈 월드 FPS 데모입니다. Claude(Fable 5)가 Three.js로 제작했고,
+**텍스처는 Higgsfield AI로 생성**한 뒤 수학적 심리스 보정(FFT 주기 분해 + 최소비용 컷)과
+노멀맵 추출을 거쳐 PBR 머티리얼로 입혔습니다. 나머지(지형·모델·사운드)는 전부 코드 절차 생성입니다.
 
-![타이틀 화면](docs/screenshot-title.png)
+![월드 전경](docs/screenshot-title.png)
 ![전투 장면](docs/screenshot-combat.png)
 
 ## 실행 방법
@@ -38,6 +39,9 @@ GitHub Pages를 켜면 (Settings → Pages → 브랜치 선택) 바로 온라�
 - **체력 재생 / 피격 비네트 / 사망·재출격 루프**
 - **절차 생성 사운드** — WebAudio로 합성한 총성·타격음·폭발음 (오디오 파일 없음)
 - **낮 하늘 + 태양 그림자** — Three.js Sky 셰이더, 플레이어를 따라다니는 섀도 카메라
+- **AI 생성 PBR 텍스처 7종** (Higgsfield) — 잔디/암벽/모래/콘크리트/수피/침엽/건메탈.
+  지형은 잔디·암벽·모래·눈을 경사와 고도로 혼합하는 커스텀 스플랫 셰이더
+  (`MeshStandardMaterial.onBeforeCompile`)로 렌더링하고, 각 재질의 노멀맵도 같은 가중치로 블렌딩합니다
 
 ## 기술 스택
 
@@ -48,8 +52,9 @@ GitHub Pages를 켜면 (Settings → Pages → 브랜치 선택) 바로 온라�
 ## 파일 구조
 
 ```
-index.html      게임 페이지 + HUD + 오버레이
-src/main.js     게임 전체 (지형, AI, 사격, 파티클, 오디오)
-lib/            Three.js 번들
-docs/           스크린샷
+index.html          게임 페이지 + HUD + 오버레이
+src/main.js         게임 전체 (지형, AI, 사격, 파티클, 오디오)
+assets/textures/    Higgsfield AI 생성 PBR 텍스처 (basecolor + normal × 7종)
+lib/                Three.js 번들
+docs/               스크린샷
 ```
