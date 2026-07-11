@@ -255,6 +255,10 @@ function slopeAt(x, z) {
 }
 
 // abandoned outpost near spawn
+const BUILDING_DEFS = [
+  [28, 6, -34, 10, 5, 8], [40, 6, -26, 7, 8, 7], [33, 6, -18, 6, 4, 12],
+  [-42, 6, 20, 9, 6, 9], [-34, 6, 30, 6, 10, 6],
+];
 {
   const concrete = new THREE.MeshStandardMaterial({ map: TEX.concreteBC, normalMap: TEX.concreteN, roughness: 0.9 });
   const dark = new THREE.MeshStandardMaterial({ map: TEX.metalBC, normalMap: TEX.metalN, color: 0x8a8d92, roughness: 0.8 });
@@ -265,11 +269,7 @@ function slopeAt(x, z) {
     return geo;
   };
   const outpost = new THREE.Group();
-  const buildings = [
-    [28, 6, -34, 10, 5, 8], [40, 6, -26, 7, 8, 7], [33, 6, -18, 6, 4, 12],
-    [-42, 6, 20, 9, 6, 9], [-34, 6, 30, 6, 10, 6],
-  ];
-  for (const [x, , z, w, h, d] of buildings) {
+  for (const [x, , z, w, h, d] of BUILDING_DEFS) {
     const y = terrainHeight(x, z);
     const box = new THREE.Mesh(scaleBoxUV(new THREE.BoxGeometry(w, h, d), w, h, d), concrete);
     box.position.set(x, y + h / 2 - 0.3, z);
@@ -301,6 +301,8 @@ function loadGLTF(url) {
   return new Promise((resolve, reject) => gltfLoader.load(url, resolve, undefined, reject));
 }
 
+const treeSpots = [];
+
 // dead-tree forest from Poly Haven photoscans, instanced per submesh
 async function plantForest() {
   // clustered inside the playable core so the fog line always has silhouettes
@@ -321,6 +323,7 @@ async function plantForest() {
     root.traverse((o) => { if (o.isMesh) meshes.push(o); });
     const spots = scatter(sp.count, 24,
       (x, y, z) => Math.hypot(x, z) < CORE && y > WATER_LEVEL + 1.2 && y < 13 && slopeAt(x, z) < 0.6);
+    for (const p of spots) treeSpots.push(p);
     const spotMats = spots.map((p) => {
       const sc = THREE.MathUtils.lerp(sp.h[0], sp.h[1], Math.random()) / baseH;
       const m = new THREE.Matrix4();
@@ -347,8 +350,8 @@ async function plantForest() {
 const protos = {};
 async function loadSkeletons() {
   const defs = [
-    { key: 'minion', url: 'assets/models/skeleton_minion.glb', hp: 3, speed: 3.6, damage: 14, scale: 1.7 },
-    { key: 'warrior', url: 'assets/models/skeleton_warrior.glb', hp: 5, speed: 2.9, damage: 22, scale: 1.85 },
+    { key: 'minion', url: 'assets/models/skeleton_minion.glb', hp: 3, speed: 3.7, damage: 14, scale: 2.05 },
+    { key: 'warrior', url: 'assets/models/skeleton_warrior.glb', hp: 6, speed: 3.0, damage: 24, scale: 2.6 },
   ];
   for (const d of defs) {
     const gltf = await loadGLTF(d.url);
@@ -505,6 +508,8 @@ const sfx = {
   hurt: () => { playTone(110, 0.25, 0.35, 'sawtooth', 55); playNoise(0.2, 500, 0.3); },
   reload: () => playTone(500, 0.1, 0.12, 'triangle'),
   groan: () => playTone(70 + Math.random() * 30, 0.9, 0.12, 'sawtooth', 45),
+  scream: () => { playTone(900 + Math.random() * 300, 0.9, 0.18, 'sawtooth', 180); playNoise(0.5, 3000, 0.15, 500); },
+  alarm: () => { playTone(660, 0.28, 0.25, 'square'); setTimeout(() => playTone(520, 0.28, 0.25, 'square'), 300); setTimeout(() => playTone(660, 0.28, 0.25, 'square'), 600); },
   attack: () => playNoise(0.18, 900, 0.3, 250),
   jump: () => playTone(300, 0.08, 0.08, 'triangle'),
   heartbeat: () => { playTone(48, 0.12, 0.5, 'sine'); setTimeout(() => playTone(44, 0.1, 0.35, 'sine'), 180); },
@@ -568,6 +573,8 @@ const enemies = [];
 const enemyHitboxes = [];
 const hitboxMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
 const hitboxGeo = new THREE.BoxGeometry(0.9, 1.75, 0.9);
+const eyeGeoShared = new THREE.SphereGeometry(0.05, 8, 8);
+const eyeMatShared = new THREE.MeshBasicMaterial({ color: 0xff2010 });
 
 function spawnEnemy(nearPos) {
   const keys = Object.keys(protos);
@@ -583,8 +590,28 @@ function spawnEnemy(nearPos) {
   const obj = SkeletonUtils.clone(proto.scene);
   const sc = proto.scale / Math.max(proto.height, 0.001);
   obj.scale.setScalar(sc);
-  obj.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; } });
-  obj.position.set(x, terrainHeight(x, z), z);
+  obj.traverse((o) => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      o.castShadow = true;
+      o.frustumCulled = false;
+      // sickly grave-dirt recolor
+      o.material = o.material.clone();
+      if (o.material.color) o.material.color.setHex(0x8e937d);
+      o.material.roughness = 1;
+    }
+  });
+  // burning red eyes set into the skull (skull sits at ~86% of body height)
+  const H = proto.height;
+  const eyeGlow = new THREE.PointLight(0xff2015, 2.4, 5, 1.8);
+  const eyeL = new THREE.Mesh(eyeGeoShared, eyeMatShared);
+  const eyeR = new THREE.Mesh(eyeGeoShared, eyeMatShared);
+  eyeL.scale.setScalar(H * 0.55);
+  eyeR.scale.setScalar(H * 0.55);
+  eyeL.position.set(-H * 0.052, H * 0.86, H * 0.11);
+  eyeR.position.set(H * 0.052, H * 0.86, H * 0.11);
+  eyeGlow.position.set(0, H * 0.86, H * 0.14);
+  obj.add(eyeL, eyeR, eyeGlow);
+  obj.position.set(x, terrainHeight(x, z) - 2.4, z);   // starts buried — rises from the grave
 
   const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
   hitbox.position.y = 0.9;
@@ -614,6 +641,7 @@ function spawnEnemy(nearPos) {
     actions.death.clampWhenFinished = true;
   }
   scene.add(obj);
+  spawnBurst(new THREE.Vector3(x, terrainHeight(x, z) + 0.3, z), new THREE.Color(0x4a3a28), 18, 3, 0.8);
   const enemy = {
     obj, hitbox, mixer, actions,
     type,
@@ -624,6 +652,9 @@ function spawnEnemy(nearPos) {
     attackTimer: 0,
     dieTimer: 0,
     groanTimer: 2 + Math.random() * 8,
+    rise: 1.4,                       // seconds spent clawing out of the ground
+    lungeCd: 4 + Math.random() * 5,  // rush attack cooldown
+    lunging: 0,
   };
   hitbox.userData.enemy = enemy;
   enemies.push(enemy);
@@ -663,21 +694,26 @@ function removeEnemy(enemy) {
 }
 
 // ---------------------------------------------------------------- mission --
-const LORE = [
-  '기록 #1 — 첫날 밤. 나무들이… 움직인 것 같다. 착각이길 바란다.',
-  '기록 #2 — 김 박사가 사라졌다. 텐트 안에는 뼈 하나만 남아 있었다.',
-  '기록 #3 — 그것들은 빛을 두려워한다. 손전등을 절대 끄지 마라.',
-  '기록 #4 — 발전기만 살리면 송신기가 작동한다. 감시탑으로 가야 한다.',
-  '기록 #5 — 우리는 너무 늦었다. 부디 당신은… 새벽을 보길.',
-];
+// escape-room style: the generator needs a 4-digit code. Three digits hide in
+// the recovered records; the last one must be OBSERVED in the world (the
+// watchtower stands on four legs).
+function loreLines(code) {
+  return [
+    `기록 #1 — 놈들이 밤마다 땅에서 기어 나온다. 발전기 코드 첫째 자리는 ${code[0]}. 잊지 마라.`,
+    `기록 #2 — 김 박사가 사라졌다. 코드 둘째 자리는 ${code[1]}. 놈들은 빛을 싫어한다.`,
+    `기록 #3 — 코드 셋째 자리는 ${code[2]}. 제발… 소리를 내지 마라. 놈들이 듣는다.`,
+    '기록 #4 — 마지막 자리는 적지 않겠다. 감시탑을 받치고 있는 다리의 개수를 세어라.',
+    '기록 #5 — 우리는 너무 늦었다. 코드를 입력하고… 부디 새벽을 보길.',
+  ];
+}
 const GEN_POS = new THREE.Vector3(0, terrainHeight(2.8, -48.5), -48.5);
 const mission = {
   phase: 'collect',      // collect -> generator -> defend -> won
   relics: [],
   collected: 0,
   total: 5,
-  genProgress: 0,
-  genTime: 3,
+  code: [1, 1, 1, 4],
+  lore: [],
   defendT: 90,
   loreTimer: 0,
 };
@@ -702,6 +738,11 @@ function makeRelic(x, z) {
   g.add(box, screen, light, beam);
   g.position.set(x, terrainHeight(x, z) + 0.55, z);
   g.userData.baseY = g.position.y;
+  g.userData.beam = beam;
+  // the waypoint only marks an approximate search area, not the exact spot
+  const oa = Math.random() * Math.PI * 2;
+  const od = 12 + Math.random() * 14;
+  g.userData.wpOffset = new THREE.Vector3(Math.cos(oa) * od, 0, Math.sin(oa) * od);
   scene.add(g);
   return g;
 }
@@ -710,14 +751,26 @@ function setupMission() {
   mission.relics = [];
   mission.phase = 'collect';
   mission.collected = 0;
-  mission.genProgress = 0;
   mission.defendT = 90;
+  mission.code = [
+    1 + Math.floor(Math.random() * 9),
+    1 + Math.floor(Math.random() * 9),
+    1 + Math.floor(Math.random() * 9),
+    4,   // the watchtower's legs — count them
+  ];
+  mission.lore = loreLines(mission.code);
   const spots = scatter(mission.total, 45,
     (x, y, z) => Math.hypot(x, z) < 165 && y > WATER_LEVEL + 1.5 && slopeAt(x, z) < 0.6);
   while (spots.length < mission.total) spots.push({ x: 60 + spots.length * 15, z: 60 });
-  for (const p of spots) mission.relics.push(makeRelic(p.x, p.z));
+  spots.forEach((p, i) => {
+    const r = makeRelic(p.x, p.z);
+    r.userData.loreId = i;
+    mission.relics.push(r);
+  });
   genLamp.material.color.setHex(0xff2818);
-  setObjective('기록 회수', `조사대의 기록장치를 찾아라 — <b>0 / ${mission.total}</b>`);
+  genLight.color.setHex(0xff3020);
+  kpClose();
+  setObjective('기록 회수', `기록장치를 찾아 발전기 <b>접근 코드</b>를 알아내라 — <b>0 / ${mission.total}</b><br><small style="opacity:.7">마커는 대략적인 탐색 구역이다</small>`);
 }
 
 // generator console at the watchtower base
@@ -735,6 +788,101 @@ scene.add(genLamp);
 const genLight = new THREE.PointLight(0xff3020, 3, 10, 1.7);
 genLight.position.copy(genLamp.position).add(new THREE.Vector3(0, 0.4, 0));
 scene.add(genLight);
+
+// ---------------------------------------------------------------- minimap --
+const worldMap = document.createElement('canvas');
+worldMap.width = worldMap.height = 256;
+{
+  const ctx = worldMap.getContext('2d');
+  const img = ctx.createImageData(256, 256);
+  for (let py = 0; py < 256; py++) {
+    for (let px = 0; px < 256; px++) {
+      const wx = (px / 255) * WORLD_SIZE - WORLD_SIZE / 2;
+      const wz = (py / 255) * WORLD_SIZE - WORLD_SIZE / 2;
+      const y = terrainHeight(wx, wz);
+      let r, g, b;
+      if (y < WATER_LEVEL) { r = 16; g = 30; b = 52; }
+      else if (y < WATER_LEVEL + 2.5) { r = 92; g = 82; b = 56; }
+      else if (y > 13) { r = 116; g = 124; b = 130; }
+      else {
+        const t = THREE.MathUtils.clamp((y + 6) / 24, 0, 1);
+        r = 28 + 26 * t; g = 46 + 30 * t; b = 26 + 18 * t;
+      }
+      const i = (py * 256 + px) * 4;
+      img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function bakeMapStatics() {
+  const ctx = worldMap.getContext('2d');
+  const s = 256 / WORLD_SIZE;
+  ctx.fillStyle = '#161d12';
+  for (const t of treeSpots) ctx.fillRect((t.x + 300) * s - 1, (t.z + 300) * s - 1, 2, 2);
+  ctx.fillStyle = '#71747a';
+  for (const [x, , z, w, , d] of BUILDING_DEFS) {
+    ctx.fillRect((x + 300 - w / 2) * s, (z + 300 - d / 2) * s, Math.max(w * s, 2), Math.max(d * s, 2));
+  }
+  ctx.fillRect((300 - 3) * s, (-52 + 300 - 3) * s, 6 * s + 1, 6 * s + 1);   // watchtower
+}
+function drawMinimap() {
+  const cv = ui.minimap;
+  if (!cv) return;
+  const mm = cv.getContext('2d');
+  const S = 150, R = 85;                    // view radius in meters
+  const pxm = S / (2 * R), ws = 256 / WORLD_SIZE;
+  const cx = camera.position.x, cz = camera.position.z;
+  mm.clearRect(0, 0, S, S);
+  mm.save();
+  mm.beginPath();
+  mm.arc(S / 2, S / 2, S / 2 - 1, 0, Math.PI * 2);
+  mm.clip();
+  const sw = 2 * R * ws;
+  mm.drawImage(worldMap, (cx + 300) * ws - sw / 2, (cz + 300) * ws - sw / 2, sw, sw, 0, 0, S, S);
+  const toMap = (x, z) => [(x - cx) * pxm + S / 2, (z - cz) * pxm + S / 2];
+  if (mission.phase === 'collect') {
+    mm.strokeStyle = 'rgba(255,170,80,.85)';
+    mm.fillStyle = 'rgba(255,170,80,.14)';
+    for (const r of mission.relics) {
+      const o = r.userData.wpOffset;
+      const [mx, my] = toMap(r.position.x + o.x, r.position.z + o.z);
+      mm.beginPath();
+      mm.arc(mx, my, 27 * pxm, 0, Math.PI * 2);
+      mm.fill(); mm.stroke();
+    }
+  }
+  {
+    const [gx, gy] = toMap(GEN_POS.x, GEN_POS.z);
+    mm.fillStyle = (mission.phase === 'defend' || mission.phase === 'won') ? '#43e06a' : '#ff5a3a';
+    mm.fillRect(gx - 2.5, gy - 2.5, 5, 5);
+  }
+  mm.fillStyle = '#ff3626';
+  for (const e of enemies) {
+    if (e.state === 'dying') continue;
+    const ex0 = e.obj.position.x, ez0 = e.obj.position.z;
+    if (Math.hypot(ex0 - cx, ez0 - cz) > R) continue;
+    const [ex, ey] = toMap(ex0, ez0);
+    mm.beginPath();
+    mm.arc(ex, ey, 2.3, 0, Math.PI * 2);
+    mm.fill();
+  }
+  // player arrow (map is north-up; arrow rotates with view)
+  mm.translate(S / 2, S / 2);
+  mm.rotate(-state.yaw);
+  mm.fillStyle = '#ffe9c2';
+  mm.beginPath();
+  mm.moveTo(0, -7); mm.lineTo(5, 6); mm.lineTo(0, 3); mm.lineTo(-5, 6);
+  mm.closePath(); mm.fill();
+  mm.restore();
+  mm.strokeStyle = 'rgba(255,255,255,.3)';
+  mm.beginPath();
+  mm.arc(S / 2, S / 2, S / 2 - 1, 0, Math.PI * 2);
+  mm.stroke();
+  mm.fillStyle = 'rgba(255,255,255,.75)';
+  mm.font = '10px sans-serif';
+  mm.textAlign = 'center';
+  mm.fillText('N', S / 2, 12);
+}
 
 function setObjective(title, descHTML) {
   document.getElementById('obj-title').textContent = 'MISSION — ' + title;
@@ -794,7 +942,15 @@ const ui = {
   iFill: document.getElementById('interact-fill'),
   lore: document.getElementById('lore'),
   btnInteract: document.getElementById('btn-interact'),
+  minimap: document.getElementById('minimap'),
 };
+// keypad buttons (clickable on touch and when the pointer is not locked)
+document.querySelectorAll('.kp-btn').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (b.dataset.k === 'close') kpClose();
+    else kpInput(b.dataset.k);
+  });
+});
 
 function resetGame() {
   for (const e of [...enemies]) removeEnemy(e);
@@ -818,12 +974,54 @@ function collectRelic(relic) {
   mission.collected++;
   playTone(880, 0.15, 0.2, 'sine', 1320);
   playTone(440, 0.3, 0.12, 'triangle');
-  showLore(LORE[Math.min(mission.collected - 1, LORE.length - 1)]);
+  showLore(mission.lore[relic.userData.loreId]);
+  // the night deepens with every recovered record
+  state.maxEnemies = Math.min(6 + mission.collected, 12);
+  state.respawnQueue.push(state.time + 1);
   if (mission.collected >= mission.total) {
     mission.phase = 'generator';
-    setObjective('발전기 가동', '감시탑 아래 <b>발전기</b>를 가동해 송신기를 살려라');
+    setObjective('접근 코드', '감시탑 발전기에 <b>4자리 코드</b>를 입력하라<br><small style="opacity:.7">힌트는 회수한 기록에 있다</small>');
   } else {
-    setObjective('기록 회수', `조사대의 기록장치를 찾아라 — <b>${mission.collected} / ${mission.total}</b>`);
+    setObjective('기록 회수', `기록장치를 찾아 발전기 <b>접근 코드</b>를 알아내라 — <b>${mission.collected} / ${mission.total}</b><br><small style="opacity:.7">마커는 대략적인 탐색 구역이다</small>`);
+  }
+}
+
+// ----- generator keypad (escape-room lock) -----
+const keypad = { open: false, buf: '' };
+function kpRender(flash) {
+  const disp = document.getElementById('kp-display');
+  disp.textContent = (keypad.buf + '····'.slice(keypad.buf.length)).split('').join(' ');
+  disp.style.color = flash === 'bad' ? '#ff5544' : flash === 'good' ? '#66ff88' : '#ffd9a0';
+}
+function kpOpen() {
+  if (keypad.open || mission.phase !== 'generator') return;
+  keypad.open = true;
+  keypad.buf = '';
+  kpRender();
+  document.getElementById('keypad').style.display = 'flex';
+}
+function kpClose() {
+  keypad.open = false;
+  const el = document.getElementById('keypad');
+  if (el) el.style.display = 'none';
+}
+function kpInput(ch) {
+  if (!keypad.open) return;
+  if (ch === 'back') keypad.buf = keypad.buf.slice(0, -1);
+  else if (/^[0-9]$/.test(ch) && keypad.buf.length < 4) keypad.buf += ch;
+  kpRender();
+  if (keypad.buf.length === 4) {
+    if (keypad.buf === mission.code.join('')) {
+      kpRender('good');
+      playTone(660, 0.2, 0.2, 'triangle', 990);
+      setTimeout(() => { kpClose(); startDefend(); }, 450);
+    } else {
+      kpRender('bad');
+      sfx.alarm();
+      showLore('오답 — 경보가 골짜기에 울려 퍼진다. 놈들이 몰려온다!');
+      for (let i = 0; i < 2; i++) spawnEnemy(camera.position);
+      setTimeout(() => { keypad.buf = ''; kpRender(); }, 700);
+    }
   }
 }
 function startDefend() {
@@ -957,10 +1155,17 @@ document.addEventListener('mousemove', (e) => {
   state.pitch -= e.movementY * 0.0022;
   state.pitch = THREE.MathUtils.clamp(state.pitch, -1.45, 1.45);
 });
-document.addEventListener('mousedown', (e) => { if (state.playing && e.button === 0) state.mouseDown = true; });
+document.addEventListener('mousedown', (e) => { if (state.playing && e.button === 0 && !keypad.open) state.mouseDown = true; });
 document.addEventListener('mouseup', (e) => { if (e.button === 0) state.mouseDown = false; });
 document.addEventListener('keydown', (e) => {
   keys[e.code] = true;
+  if (keypad.open) {
+    const m = e.code.match(/^(?:Digit|Numpad)([0-9])$/);
+    if (m) kpInput(m[1]);
+    else if (e.code === 'Backspace') kpInput('back');
+    else if (e.code === 'Escape') kpClose();
+    return;
+  }
   if (e.code === 'KeyR' && state.playing && state.reloading <= 0 && state.mag < state.magSize) {
     state.reloading = 1.4;
     sfx.reload();
@@ -1139,7 +1344,7 @@ function update(dt) {
     if (e.state === 'dying') {
       e.dieTimer -= dt;
       if (e.dieTimer <= 0) {
-        e.obj.position.y -= dt * 0.7;   // sink into the earth
+        e.obj.position.y -= dt * 0.7;   // sink back into the earth
         if (e.dieTimer < -2) removeEnemy(e);
       }
       continue;
@@ -1148,6 +1353,18 @@ function update(dt) {
     _toPlayer.copy(camera.position).sub(p);
     _toPlayer.y = 0;
     const dist = _toPlayer.length();
+
+    // clawing out of the ground
+    if (e.rise > 0) {
+      e.rise -= dt;
+      p.y = terrainHeight(p.x, p.z) - 2.4 * Math.max(e.rise, 0) / 1.4;
+      if (Math.random() < dt * 6) {
+        spawnBurst(new THREE.Vector3(p.x, terrainHeight(p.x, p.z) + 0.2, p.z),
+          new THREE.Color(0x4a3a28), 4, 2.5, 0.6);
+      }
+      e.obj.lookAt(camera.position.x, p.y, camera.position.z);
+      continue;
+    }
 
     e.groanTimer -= dt;
     if (e.groanTimer <= 0 && dist < 40) {
@@ -1159,23 +1376,38 @@ function update(dt) {
       e.attackTimer -= dt;
       if (e.attackTimer <= 0.45 && !e.didDamage) {
         e.didDamage = true;
-        if (dist < 2.6 && state.playing && !state.dead) damagePlayer(e.damage);
+        if (dist < 2.8 && state.playing && !state.dead) damagePlayer(e.damage);
       }
       if (e.attackTimer <= 0) {
         e.state = 'chase';
         if (e.actions.walk) e.actions.walk.reset().fadeIn(0.15).play();
       }
-    } else if (dist < 1.9 && !state.dead && state.playing) {
+    } else if (dist < 2.0 && !state.dead && state.playing) {
       e.state = 'attack';
       e.attackTimer = 0.95;
       e.didDamage = false;
       sfx.attack();
       if (e.actions.walk) e.actions.walk.fadeOut(0.1);
       if (e.actions.attack) e.actions.attack.reset().fadeIn(0.08).play();
-    } else if (dist < 120 && dist > 1.5 && !state.dead) {
+    } else if (dist < 120 && dist > 1.6 && !state.dead) {
+      // shrieking rush: brief burst of unnatural speed
+      let mul = 1;
+      if (e.lunging > 0) {
+        e.lunging -= dt;
+        mul = 2.6;
+        if (e.lunging <= 0 && e.actions.walk) e.actions.walk.timeScale = 1;
+      } else {
+        e.lungeCd -= dt;
+        if (e.lungeCd <= 0 && dist < 28 && dist > 6 && state.playing) {
+          e.lungeCd = 5 + Math.random() * 6;
+          e.lunging = 1.2;
+          sfx.scream();
+          if (e.actions.walk) e.actions.walk.timeScale = 2.4;
+        }
+      }
       _toPlayer.normalize();
-      p.x += _toPlayer.x * e.speed * dt;
-      p.z += _toPlayer.z * e.speed * dt;
+      p.x += _toPlayer.x * e.speed * mul * dt;
+      p.z += _toPlayer.z * e.speed * mul * dt;
     }
     p.y = terrainHeight(p.x, p.z);
     e.obj.lookAt(camera.position.x, p.y, camera.position.z);
@@ -1197,17 +1429,21 @@ function update(dt) {
       let nearest = null, nd = 1e9;
       for (const r of mission.relics) {
         const d = r.position.distanceTo(camera.position);
+        r.userData.beam.visible = d < 45;   // the light pillar only shows up close
         if (d < nd) { nd = d; nearest = r; }
       }
       if (nearest) {
-        wpTarget = nearest.position;
+        // far away: point at the search area, not the record itself
+        wpTarget = nd > 45
+          ? nearest.position.clone().add(nearest.userData.wpOffset)
+          : nearest.position;
         if (nd < 3.2) interact = { label: '기록 회수', relic: nearest };
       }
     } else if (mission.phase === 'generator') {
       wpTarget = genLamp.position;
       wpLift = 0.8;
-      if (camera.position.distanceTo(genConsole.position) < 3.6) {
-        interact = { label: '발전기 가동 — 길게 누르기', hold: true };
+      if (camera.position.distanceTo(genConsole.position) < 3.6 && !keypad.open) {
+        interact = { label: '접근 코드 입력', keypadOpen: true };
       }
     } else if (mission.phase === 'defend') {
       mission.defendT -= dt;
@@ -1226,27 +1462,20 @@ function update(dt) {
     ui.iPrompt.style.display = 'block';
     ui.iText.innerHTML = IS_TOUCH ? interact.label : `<kbd>E</kbd>${interact.label}`;
     if (IS_TOUCH) ui.btnInteract.style.display = 'block';
-    if (interact.hold) {
-      ui.iBar.style.display = 'block';
-      if (wantInteract) {
-        mission.genProgress += dt;
-        if (mission.genProgress >= mission.genTime) { mission.genProgress = 0; startDefend(); }
-      } else {
-        mission.genProgress = Math.max(0, mission.genProgress - dt * 1.5);
-      }
-      ui.iFill.style.width = `${(mission.genProgress / mission.genTime) * 100}%`;
-    } else {
-      ui.iBar.style.display = 'none';
-      if (wantInteract && !state.interactLatch) {
-        state.interactLatch = true;
-        collectRelic(interact.relic);
-      }
+    if (wantInteract && !state.interactLatch) {
+      state.interactLatch = true;
+      if (interact.relic) collectRelic(interact.relic);
+      else if (interact.keypadOpen) kpOpen();
     }
   } else {
     ui.iPrompt.style.display = 'none';
     if (IS_TOUCH) ui.btnInteract.style.display = 'none';
   }
   if (!wantInteract) state.interactLatch = false;
+  if (keypad.open && (mission.phase !== 'generator'
+      || camera.position.distanceTo(genConsole.position) > 6)) kpClose();
+
+  drawMinimap();
 
   // waypoint marker projected to the screen (clamped to edges when off-view)
   if (wpTarget && state.playing && !state.dead && !state.won) {
@@ -1284,6 +1513,7 @@ renderer.setAnimationLoop(() => {
 // ------------------------------------------------------------- bootstrap --
 Promise.all([plantForest(), loadSkeletons()])
   .then(() => {
+    bakeMapStatics();
     setupMission();
     for (let i = 0; i < state.maxEnemies; i++) spawnEnemy(camera.position);
     ui.playBtn.disabled = false;
@@ -1299,3 +1529,6 @@ Promise.all([plantForest(), loadSkeletons()])
 window.__game = { scene, camera, renderer, terrain, state, enemies, protos, flashlight, __keys: keys };
 window.__mission = mission;
 mission.genPos = GEN_POS;
+mission.kpInput = kpInput;
+mission.kpOpen = kpOpen;
+mission.keypad = keypad;

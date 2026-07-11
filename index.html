@@ -100,6 +100,38 @@
   }
   #btn-interact { right: 150px; bottom: 150px; width: 74px; height: 74px; font-size: 13px;
     border-color: rgba(255,190,110,.6); color: #ffd9a8; display: none; }
+
+  #minimap {
+    position: fixed; top: 14px; right: 16px; width: 150px; height: 150px;
+    border-radius: 50%; border: 2px solid rgba(255,255,255,.28);
+    background: rgba(0,0,0,.5); z-index: 2;
+  }
+  body.touch #btn-pause { right: 182px; }
+
+  #keypad {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    z-index: 6; pointer-events: none;
+  }
+  #keypad .kp-panel {
+    pointer-events: auto; background: rgba(12, 9, 7, .92);
+    border: 1px solid rgba(255, 170, 100, .4); border-radius: 12px;
+    padding: 20px 26px; text-align: center;
+    box-shadow: 0 0 50px rgba(255, 120, 40, .15);
+  }
+  #kp-title { font-size: 13px; letter-spacing: 3px; color: #ff9a5c; margin-bottom: 10px; }
+  #kp-display {
+    font-size: 34px; letter-spacing: 10px; color: #ffd9a0; font-family: monospace;
+    background: rgba(0,0,0,.55); border-radius: 6px; padding: 6px 10px; margin-bottom: 14px;
+    min-width: 170px;
+  }
+  #kp-grid { display: grid; grid-template-columns: repeat(3, 58px); gap: 8px; justify-content: center; }
+  .kp-btn {
+    height: 46px; font-size: 18px; font-weight: 700; color: #e8dcc8;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 8px; cursor: pointer;
+  }
+  .kp-btn:hover { background: rgba(255,255,255,.18); }
+  #kp-hint { font-size: 12px; opacity: .65; margin-top: 12px; line-height: 1.6; }
   #score { font-size: 15px; letter-spacing: 1px; }
   #score b { color: #ff9a5c; font-size: 18px; }
 
@@ -172,6 +204,20 @@
   </div>
 </div>
 <div id="waypoint"><div class="wp-diamond"></div><div class="wp-dist">0m</div></div>
+<canvas id="minimap" width="150" height="150"></canvas>
+<div class="hud" id="keypad">
+  <div class="kp-panel">
+    <div id="kp-title">GENERATOR — 접근 코드</div>
+    <div id="kp-display">· · · ·</div>
+    <div id="kp-grid">
+      <button class="kp-btn" data-k="1">1</button><button class="kp-btn" data-k="2">2</button><button class="kp-btn" data-k="3">3</button>
+      <button class="kp-btn" data-k="4">4</button><button class="kp-btn" data-k="5">5</button><button class="kp-btn" data-k="6">6</button>
+      <button class="kp-btn" data-k="7">7</button><button class="kp-btn" data-k="8">8</button><button class="kp-btn" data-k="9">9</button>
+      <button class="kp-btn" data-k="back">⌫</button><button class="kp-btn" data-k="0">0</button><button class="kp-btn" data-k="close">✕</button>
+    </div>
+    <div id="kp-hint">힌트는 회수한 기록 속에 있다<br>데스크톱: 숫자 키로 입력 · Backspace 지우기</div>
+  </div>
+</div>
 <div class="hud" id="interact-prompt"><span id="interact-text"></span><div id="interact-bar"><div id="interact-fill"></div></div></div>
 <div class="hud" id="lore"></div>
 <div id="darkness"></div>
@@ -200,8 +246,8 @@
   <div id="death-stats"></div>
   <div id="story" style="max-width:640px; font-size:15px; line-height:1.8; opacity:.85; margin:0 0 26px; color:#e8d8c8;">
     무전이 끊긴 지 사흘째. 이 골짜기로 들어간 조사대는 돌아오지 않았다.<br>
-    그들이 남긴 <b>기록장치 5개</b>를 회수하고, 감시탑의 <b>발전기</b>를 살려 구조 신호를 보내라.<br>
-    새벽까지 버텨라. 밤은 네 편이 아니다.
+    그들이 남긴 <b>기록장치 5개</b>에서 발전기 <b>접근 코드</b>의 단서를 모아라.<br>
+    코드를 풀어 구조 신호를 보내고, 새벽까지 버텨라. 밤은 네 편이 아니다.
   </div>
   <div class="controls">
     <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>Shift</kbd> 질주 &nbsp; <kbd>Space</kbd> 점프<br>
