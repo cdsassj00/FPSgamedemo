@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FABLE FRONTIER — Open World FPS Demo</title>
+<title>FABLE FRONTIER: NIGHTFALL — Horror FPS Demo</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
   #app { position: fixed; inset: 0; }
   canvas { display: block; }
 
-  .hud { font-family: "Segoe UI", system-ui, sans-serif; color: #e8f0e8; user-select: none; }
+  .hud { font-family: "Segoe UI", system-ui, sans-serif; color: #e8e4dc; user-select: none; }
 
   #crosshair {
     position: fixed; left: 50%; top: 50%; width: 22px; height: 22px;
-    transform: translate(-50%, -50%); pointer-events: none; opacity: 0.9;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: 0.85;
   }
   #crosshair::before, #crosshair::after {
-    content: ""; position: absolute; background: #d7ffd7;
+    content: ""; position: absolute; background: #e8dfc9;
     box-shadow: 0 0 4px rgba(0,0,0,.8);
   }
   #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 100% 32%, 0 32%, 0 68%, 100% 68%, 100% 100%, 0 100%); }
@@ -30,8 +30,12 @@
 
   #vignette {
     position: fixed; inset: 0; pointer-events: none; opacity: 0;
-    background: radial-gradient(ellipse at center, transparent 45%, rgba(200,20,20,.55) 100%);
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(190,15,15,.6) 100%);
     transition: opacity 150ms linear;
+  }
+  #darkness {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.5) 100%);
   }
 
   #hud-bottom {
@@ -40,13 +44,13 @@
     pointer-events: none;
   }
   .panel {
-    background: rgba(8, 14, 10, 0.55); border: 1px solid rgba(160, 220, 170, 0.25);
+    background: rgba(10, 8, 8, 0.6); border: 1px solid rgba(200, 160, 140, 0.22);
     border-radius: 8px; padding: 10px 16px; backdrop-filter: blur(3px);
   }
   #hpbar-wrap { width: 240px; }
   #hpbar-label { font-size: 12px; letter-spacing: 2px; opacity: .8; margin-bottom: 5px; }
-  #hpbar { height: 10px; background: rgba(255,255,255,.12); border-radius: 5px; overflow: hidden; }
-  #hpbar-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #45d06a, #a5e84a); border-radius: 5px; transition: width 120ms ease-out; }
+  #hpbar { height: 10px; background: rgba(255,255,255,.1); border-radius: 5px; overflow: hidden; }
+  #hpbar-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #a01a1a, #e04a30); border-radius: 5px; transition: width 120ms ease-out; }
   #ammo { font-size: 30px; font-weight: 700; text-align: right; line-height: 1; }
   #ammo small { font-size: 14px; font-weight: 400; opacity: .7; }
   #ammo .reloading { color: #ffcc44; font-size: 16px; }
@@ -56,68 +60,107 @@
     padding: 14px; pointer-events: none;
   }
   #score { font-size: 15px; letter-spacing: 1px; }
-  #score b { color: #ffd970; font-size: 18px; }
+  #score b { color: #ff9a5c; font-size: 18px; }
 
   #overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
-    background: rgba(4, 10, 6, 0.55); backdrop-filter: blur(2px);
+    background: rgba(6, 4, 4, 0.62); backdrop-filter: blur(2px);
     transition: opacity 250ms ease; z-index: 10;
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
   #overlay h1 {
     font-size: clamp(38px, 7vw, 72px); margin: 0 0 6px; letter-spacing: 6px;
-    color: #eaffe9; text-shadow: 0 0 24px rgba(90, 220, 120, .5);
+    color: #f3e8de; text-shadow: 0 0 28px rgba(220, 60, 30, .55), 0 0 60px rgba(120, 10, 10, .5);
   }
-  #overlay h2 { font-weight: 400; font-size: 16px; letter-spacing: 3px; opacity: .75; margin: 0 0 34px; }
+  #overlay h2 { font-weight: 400; font-size: 15px; letter-spacing: 3px; opacity: .75; margin: 0 0 34px; }
   #overlay .controls {
     font-size: 14px; line-height: 2; opacity: .85; margin-bottom: 34px;
   }
   #overlay .controls kbd {
-    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22);
     border-radius: 4px; padding: 1px 8px; margin: 0 3px; font-family: inherit;
   }
   #play-btn {
     font-size: 18px; letter-spacing: 3px; padding: 14px 52px; cursor: pointer;
-    color: #06130a; background: linear-gradient(180deg, #8cf2a4, #4ec973);
+    color: #180505; background: linear-gradient(180deg, #e8734a, #b53222);
     border: none; border-radius: 8px; font-weight: 700;
-    box-shadow: 0 0 30px rgba(90, 220, 120, .35);
+    box-shadow: 0 0 34px rgba(220, 70, 30, .4);
   }
-  #play-btn:hover { filter: brightness(1.1); }
-  #death-stats { font-size: 18px; margin-bottom: 26px; color: #ffb0a0; display: none; }
+  #play-btn:hover { filter: brightness(1.12); }
+  #play-btn:disabled { filter: grayscale(.7) brightness(.6); cursor: wait; }
+  #death-stats { font-size: 18px; margin-bottom: 26px; color: #ff9a88; display: none; }
+
+  /* ---- touch controls (shown only on touch devices) ---- */
+  #touch-ui { display: none; }
+  body.touch #touch-ui { display: block; }
+  body.touch .controls br + kbd, body.touch .controls { font-size: 12px; }
+  #stick-base {
+    position: fixed; width: 110px; height: 110px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.25); background: rgba(255,255,255,.06);
+    transform: translate(-50%, -50%); pointer-events: none; display: none;
+  }
+  #stick-nub {
+    position: absolute; left: 50%; top: 50%; width: 46px; height: 46px;
+    border-radius: 50%; background: rgba(255,255,255,.3);
+    transform: translate(-50%, -50%);
+  }
+  .tbtn {
+    position: fixed; border-radius: 50%; border: 2px solid rgba(255,255,255,.3);
+    background: rgba(20,12,10,.45); color: #eee; font-family: inherit;
+    font-weight: 700; letter-spacing: 1px; user-select: none;
+    -webkit-user-select: none; touch-action: none;
+  }
+  #btn-fire { right: 26px; bottom: 68px; width: 92px; height: 92px; font-size: 16px;
+    border-color: rgba(230,110,70,.55); color: #ffb08a; }
+  #btn-jump { right: 138px; bottom: 48px; width: 62px; height: 62px; font-size: 12px; }
+  #btn-reload { right: 54px; bottom: 178px; width: 52px; height: 52px; font-size: 14px; }
+  #btn-pause { right: 16px; top: 14px; width: 44px; height: 44px; font-size: 14px; border-radius: 10px; }
+  body.touch #hud-bottom { padding-bottom: 8px; }
+  body.touch #hpbar-wrap { width: 150px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 
-<div class="hud" id="hud-top"><div class="panel" id="score">ELIMINATIONS <b id="kills">0</b>&nbsp;&nbsp;·&nbsp;&nbsp;WAVE <b id="wave">1</b></div></div>
+<div class="hud" id="hud-top"><div class="panel" id="score">ELIMINATIONS <b id="kills">0</b>&nbsp;&nbsp;·&nbsp;&nbsp;NIGHT <b id="wave">1</b></div></div>
+<div id="darkness"></div>
 <div id="crosshair"></div>
 <div id="hitmarker">+</div>
 <div id="vignette"></div>
+<div id="touch-ui" class="hud">
+  <div id="stick-base"><div id="stick-nub"></div></div>
+  <button class="tbtn" id="btn-fire">FIRE</button>
+  <button class="tbtn" id="btn-jump">JUMP</button>
+  <button class="tbtn" id="btn-reload">R</button>
+  <button class="tbtn" id="btn-pause">❚❚</button>
+</div>
 <div class="hud" id="hud-bottom">
   <div class="panel" id="hpbar-wrap">
-    <div id="hpbar-label">INTEGRITY</div>
+    <div id="hpbar-label">HEARTBEAT</div>
     <div id="hpbar"><div id="hpbar-fill"></div></div>
   </div>
   <div class="panel"><div id="ammo"><span id="mag">30</span><small> / ∞</small></div></div>
 </div>
 
 <div class="hud" id="overlay">
-  <h1>FABLE FRONTIER</h1>
-  <h2>OPEN WORLD FPS DEMO — BUILT BY CLAUDE</h2>
+  <h1>NIGHTFALL</h1>
+  <h2>FABLE FRONTIER — HORROR FPS DEMO, BUILT BY CLAUDE</h2>
   <div id="death-stats"></div>
   <div class="controls">
     <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>Shift</kbd> 질주 &nbsp; <kbd>Space</kbd> 점프<br>
-    <kbd>마우스</kbd> 조준 &nbsp; <kbd>좌클릭</kbd> 사격 &nbsp; <kbd>R</kbd> 재장전 &nbsp; <kbd>Esc</kbd> 일시정지
+    <kbd>마우스</kbd> 조준 &nbsp; <kbd>좌클릭</kbd> 사격 &nbsp; <kbd>R</kbd> 재장전 &nbsp; <kbd>Esc</kbd> 일시정지<br>
+    그들이 어둠 속에서 걸어온다. 손전등 불빛이 닿는 곳만이 안전하다.
   </div>
-  <button id="play-btn">DEPLOY</button>
+  <button id="play-btn" disabled>LOADING…</button>
 </div>
 
 <script type="importmap">
 {
   "imports": {
     "three": "./lib/three.module.js",
-    "three/addons/objects/Sky.js": "./lib/Sky.js"
+    "three/addons/loaders/GLTFLoader.js": "./lib/loaders/GLTFLoader.js",
+    "three/addons/utils/SkeletonUtils.js": "./lib/SkeletonUtils.js"
   }
 }
 </script>
