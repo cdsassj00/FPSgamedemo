@@ -56,7 +56,9 @@ Cloudflare Pages / GitHub Pages에 올리면 바로 온라인 플레이 가능�
   ① 안개 속 **기록장치 5개 수색** — 마커는 대략적인 탐색 구역만 알려주고, 가까이 가야 빛기둥이 나타납니다. 기록 3개에 코드 숫자가, 하나에는 *"감시탑을 받치는 다리의 개수를 세어라"* 같은 **관찰 퍼즐**이 숨어 있습니다 (코드는 판마다 무작위)
   ② 감시탑 발전기의 **키패드에 4자리 코드 입력** — 틀리면 경보가 울리고 무리가 몰려옵니다
   ③ 구조 신호가 송신되는 **90초 생존** → 새벽, 승리
-- **더 괴기스러워진 괴물** — 땅을 뚫고 기어 나오는 스폰, 병든 뼈 빛깔, 타오르는 빨간 안광, 비명을 지르며 달려드는 돌진 패턴. 기록을 회수할수록 수가 늘어납니다
+- **AI 생성 아날로그 호러 크리처** — 개 두개골 괴물 '하운드'와 창백한 인형 여자 '위도우'.
+  Higgsfield로 컨셉 아트를 생성한 뒤 Meshy image-to-3D로 메시·텍스처·리깅·비틀걸음 애니메이션까지 자동 생성.
+  땅을 뚫고 기어 나오고, 얼굴엔 붉은 빛이 감돌며, 비명을 지르면서 2.6배속으로 달려듭니다. 기록을 회수할수록 수가 늘어납니다
 - **미니맵/레이더** — 지형·숲·건물이 그려진 원형 미니맵에 탐색 구역, 발전기, 접근 중인 괴물이 실시간 표시
 - **목표 마커 시스템** — 화면 마커와 거리 표시, 근접 시 상호작용 프롬프트
 - **AI 생성 BGM** — Higgsfield(sonilo_music)로 생성한 95초 다크 앰비언트 루프
@@ -71,7 +73,8 @@ Cloudflare Pages / GitHub Pages에 올리면 바로 온라인 플레이 가능�
 
 | 에셋 | 출처 | 라이선스 |
 |---|---|---|
-| 스켈레톤 캐릭터 2종 (애니메이션 90+종) | [KayKit Character Pack: Skeletons](https://kaylousberg.itch.io/kaykit-skeletons) by Kay Lousberg | CC0 |
+| 호러 크리처 2종 (하운드/위도우, 리깅+애니메이션) | Higgsfield 컨셉 아트 → Meshy image-to-3D | 자체 생성 |
+| 스켈레톤 캐릭터 2종 (현재 미사용, 애니메이션 90+종) | [KayKit Character Pack: Skeletons](https://kaylousberg.itch.io/kaykit-skeletons) by Kay Lousberg | CC0 |
 | 죽은 나무 포토스캔 3종 | [Poly Haven](https://polyhaven.com/) (dead_tree_trunk, quiver_tree_02, dead_quiver_trunk) | CC0 |
 | 지면/건물/금속 PBR 텍스처 7종 | Higgsfield AI 생성 후 심리스 보정 + 노멀맵 추출 | 자체 생성 |
 | BGM (다크 앰비언트 95초 루프) | Higgsfield `sonilo_music` AI 생성 | 자체 생성 |

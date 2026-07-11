@@ -349,15 +349,21 @@ async function plantForest() {
 // skeleton prototypes (KayKit, CC0) — cloned per enemy
 const protos = {};
 async function loadSkeletons() {
+  // AI-generated analog-horror puppets (Higgsfield/Meshy image-to-3D, rigged
+  // with an in-place stagger clip)
   const defs = [
-    { key: 'minion', url: 'assets/models/skeleton_minion.glb', hp: 3, speed: 3.7, damage: 14, scale: 2.05 },
-    { key: 'warrior', url: 'assets/models/skeleton_warrior.glb', hp: 6, speed: 3.0, damage: 24, scale: 2.6 },
+    { key: 'hound', url: 'assets/models/creature_hound.glb', hp: 3, speed: 4.0, damage: 16, scale: 2.3, eyes: false },
+    { key: 'widow', url: 'assets/models/creature_widow.glb', hp: 6, speed: 3.1, damage: 26, scale: 2.05, eyes: false },
   ];
   for (const d of defs) {
     const gltf = await loadGLTF(d.url);
     gltf.scene.updateMatrixWorld(true);
     const bbox = new THREE.Box3().setFromObject(gltf.scene);
-    protos[d.key] = { ...d, scene: gltf.scene, clips: gltf.animations, height: bbox.max.y - bbox.min.y };
+    protos[d.key] = {
+      ...d, scene: gltf.scene, clips: gltf.animations,
+      height: bbox.max.y - bbox.min.y,
+      footOff: -bbox.min.y,
+    };
   }
 }
 function pickClip(clips, patterns) {
@@ -579,8 +585,8 @@ const eyeMatShared = new THREE.MeshBasicMaterial({ color: 0xff2010 });
 function spawnEnemy(nearPos) {
   const keys = Object.keys(protos);
   if (!keys.length) return;
-  // warriors get more common as the nights go on
-  const type = Math.random() < Math.min(0.2 + state.wave * 0.06, 0.5) ? 'warrior' : 'minion';
+  // widows get more common as the nights go on
+  const type = Math.random() < Math.min(0.2 + state.wave * 0.06, 0.5) ? 'widow' : 'hound';
   const proto = protos[type] || protos[keys[0]];
   const angle = Math.random() * Math.PI * 2;
   const dist = 38 + Math.random() * 32;
@@ -600,27 +606,32 @@ function spawnEnemy(nearPos) {
       o.material.roughness = 1;
     }
   });
-  // burning red eyes set into the skull (skull sits at ~86% of body height)
+  // a faint red glow in the face — the only warm light on them
   const H = proto.height;
-  const eyeGlow = new THREE.PointLight(0xff2015, 2.4, 5, 1.8);
-  const eyeL = new THREE.Mesh(eyeGeoShared, eyeMatShared);
-  const eyeR = new THREE.Mesh(eyeGeoShared, eyeMatShared);
-  eyeL.scale.setScalar(H * 0.55);
-  eyeR.scale.setScalar(H * 0.55);
-  eyeL.position.set(-H * 0.052, H * 0.86, H * 0.11);
-  eyeR.position.set(H * 0.052, H * 0.86, H * 0.11);
-  eyeGlow.position.set(0, H * 0.86, H * 0.14);
-  obj.add(eyeL, eyeR, eyeGlow);
-  obj.position.set(x, terrainHeight(x, z) - 2.4, z);   // starts buried — rises from the grave
+  const eyeGlow = new THREE.PointLight(0xff2015, 2.0, 5, 1.8);
+  eyeGlow.position.set(0, -proto.footOff + H * 0.86, H * 0.1);
+  obj.add(eyeGlow);
+  if (proto.eyes) {
+    const eyeL = new THREE.Mesh(eyeGeoShared, eyeMatShared);
+    const eyeR = new THREE.Mesh(eyeGeoShared, eyeMatShared);
+    eyeL.scale.setScalar(H * 0.45);
+    eyeR.scale.setScalar(H * 0.45);
+    eyeL.position.set(-H * 0.04, -proto.footOff + H * 0.87, H * 0.09);
+    eyeR.position.set(H * 0.04, -proto.footOff + H * 0.87, H * 0.09);
+    obj.add(eyeL, eyeR);
+  }
+  const footY = proto.footOff * sc;   // world offset from obj origin to feet-on-ground
+  obj.position.set(x, terrainHeight(x, z) + footY - 2.4, z);   // starts buried — rises from the grave
 
   const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
-  hitbox.position.y = 0.9;
+  hitbox.scale.set(1 / sc, proto.scale / 1.75 / sc, 1 / sc);
+  hitbox.position.y = -proto.footOff + (proto.scale / 2) / sc;
   obj.add(hitbox);
-  hitbox.scale.setScalar(1 / sc);   // keep the hitbox ~human sized
 
   const mixer = new THREE.AnimationMixer(obj);
   const clips = proto.clips;
-  const walkClip = pickClip(clips, [/^Walking_A/i, /walk/i, /^Running_A/i, /run/i]);
+  const walkClip = pickClip(clips, [/^Walking_A/i, /walk/i, /stagger/i, /mummy/i, /^Running_A/i, /run/i])
+    || clips[0] || null;
   const attackClip = pickClip(clips, [/1H_Melee_Attack_Chop/i, /Melee_Attack/i, /attack/i, /punch/i]);
   const deathClip = pickClip(clips, [/Death_A(?!_Pose)/i, /death(?!.*pose)/i]);
   const actions = {
@@ -643,7 +654,7 @@ function spawnEnemy(nearPos) {
   scene.add(obj);
   spawnBurst(new THREE.Vector3(x, terrainHeight(x, z) + 0.3, z), new THREE.Color(0x4a3a28), 18, 3, 0.8);
   const enemy = {
-    obj, hitbox, mixer, actions,
+    obj, hitbox, mixer, actions, footY,
     type,
     hp: proto.hp,
     speed: proto.speed * (0.9 + Math.random() * 0.25),
@@ -665,7 +676,8 @@ function killEnemy(enemy) {
   enemy.dieTimer = 1.6;
   if (enemy.actions.walk) enemy.actions.walk.fadeOut(0.15);
   if (enemy.actions.attack) enemy.actions.attack.fadeOut(0.15);
-  if (enemy.actions.death) { enemy.actions.death.reset().fadeIn(0.1).play(); }
+  if (enemy.actions.death) enemy.actions.death.reset().fadeIn(0.1).play();
+  else enemy.topple = true;   // unanimated rigs keel over in code
   const p = enemy.obj.position.clone();
   p.y += 1;
   spawnBurst(p, new THREE.Color(0xd8d2c2), 30, 7, 0.9);
@@ -1343,6 +1355,7 @@ function update(dt) {
     e.mixer.update(dt);
     if (e.state === 'dying') {
       e.dieTimer -= dt;
+      if (e.topple) e.obj.rotation.x = Math.max(e.obj.rotation.x - dt * 1.4, -1.5);
       if (e.dieTimer <= 0) {
         e.obj.position.y -= dt * 0.7;   // sink back into the earth
         if (e.dieTimer < -2) removeEnemy(e);
@@ -1357,7 +1370,7 @@ function update(dt) {
     // clawing out of the ground
     if (e.rise > 0) {
       e.rise -= dt;
-      p.y = terrainHeight(p.x, p.z) - 2.4 * Math.max(e.rise, 0) / 1.4;
+      p.y = terrainHeight(p.x, p.z) + e.footY - 2.4 * Math.max(e.rise, 0) / 1.4;
       if (Math.random() < dt * 6) {
         spawnBurst(new THREE.Vector3(p.x, terrainHeight(p.x, p.z) + 0.2, p.z),
           new THREE.Color(0x4a3a28), 4, 2.5, 0.6);
@@ -1409,7 +1422,7 @@ function update(dt) {
       p.x += _toPlayer.x * e.speed * mul * dt;
       p.z += _toPlayer.z * e.speed * mul * dt;
     }
-    p.y = terrainHeight(p.x, p.z);
+    p.y = terrainHeight(p.x, p.z) + e.footY;
     e.obj.lookAt(camera.position.x, p.y, camera.position.z);
   }
 
