@@ -352,8 +352,11 @@ async function loadSkeletons() {
   // AI-generated analog-horror puppets (Higgsfield/Meshy image-to-3D, rigged
   // with an in-place stagger clip)
   const defs = [
-    { key: 'hound', url: 'assets/models/creature_hound.glb', hp: 3, speed: 4.0, damage: 16, scale: 2.3, eyes: false },
-    { key: 'widow', url: 'assets/models/creature_widow.glb', hp: 6, speed: 3.1, damage: 26, scale: 2.05, eyes: false },
+    { key: 'hound', url: 'assets/models/creature_hound.glb', hp: 3, speed: 4.0, damage: 16, scale: 2.3 },
+    { key: 'widow', url: 'assets/models/creature_widow.glb', hp: 6, speed: 3.1, damage: 26, scale: 2.05 },
+    { key: 'crawler', url: 'assets/models/creature_crawler.glb', hp: 2, speed: 5.3, damage: 12, scale: 1.5 },
+    { key: 'grinner', url: 'assets/models/creature_grinner.glb', hp: 4, speed: 3.6, damage: 20, scale: 2.0 },
+    { key: 'stalker', url: 'assets/models/creature_stalker.glb', hp: 14, speed: 2.3, damage: 40, scale: 4.3, boss: true },
   ];
   for (const d of defs) {
     const gltf = await loadGLTF(d.url);
@@ -582,11 +585,25 @@ const hitboxGeo = new THREE.BoxGeometry(0.9, 1.75, 0.9);
 const eyeGeoShared = new THREE.SphereGeometry(0.05, 8, 8);
 const eyeMatShared = new THREE.MeshBasicMaterial({ color: 0xff2010 });
 
+function pickEnemyType() {
+  const w = state.wave;
+  const stalkerUp = enemies.some((e) => e.type === 'stalker' && e.state !== 'dying');
+  const table = [
+    ['hound', 40],
+    ['crawler', 22],
+    ['grinner', 12 + w * 2],
+    ['widow', 10 + w * 3],
+    ['stalker', stalkerUp ? 0 : Math.min(3 + w * 2, 12)],   // one giant at a time
+  ].filter(([k]) => protos[k]);
+  const tot = table.reduce((s, [, x]) => s + x, 0);
+  let r = Math.random() * tot;
+  for (const [k, x] of table) { r -= x; if (r <= 0) return k; }
+  return table[0][0];
+}
 function spawnEnemy(nearPos) {
   const keys = Object.keys(protos);
   if (!keys.length) return;
-  // widows get more common as the nights go on
-  const type = Math.random() < Math.min(0.2 + state.wave * 0.06, 0.5) ? 'widow' : 'hound';
+  const type = pickEnemyType();
   const proto = protos[type] || protos[keys[0]];
   const angle = Math.random() * Math.PI * 2;
   const dist = 38 + Math.random() * 32;
@@ -608,23 +625,16 @@ function spawnEnemy(nearPos) {
   });
   // a faint red glow in the face — the only warm light on them
   const H = proto.height;
-  const eyeGlow = new THREE.PointLight(0xff2015, 2.0, 5, 1.8);
+  const eyeGlow = new THREE.PointLight(0xff2015, proto.boss ? 4.5 : 2.0, proto.boss ? 9 : 5, 1.8);
   eyeGlow.position.set(0, -proto.footOff + H * 0.86, H * 0.1);
   obj.add(eyeGlow);
-  if (proto.eyes) {
-    const eyeL = new THREE.Mesh(eyeGeoShared, eyeMatShared);
-    const eyeR = new THREE.Mesh(eyeGeoShared, eyeMatShared);
-    eyeL.scale.setScalar(H * 0.45);
-    eyeR.scale.setScalar(H * 0.45);
-    eyeL.position.set(-H * 0.04, -proto.footOff + H * 0.87, H * 0.09);
-    eyeR.position.set(H * 0.04, -proto.footOff + H * 0.87, H * 0.09);
-    obj.add(eyeL, eyeR);
-  }
   const footY = proto.footOff * sc;   // world offset from obj origin to feet-on-ground
-  obj.position.set(x, terrainHeight(x, z) + footY - 2.4, z);   // starts buried — rises from the grave
+  const burial = proto.boss ? 4.4 : 2.4;
+  obj.position.set(x, terrainHeight(x, z) + footY - burial, z);   // starts buried — rises from the grave
 
   const hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
-  hitbox.scale.set(1 / sc, proto.scale / 1.75 / sc, 1 / sc);
+  const wf = Math.max(1, proto.scale / 2.3);   // beefier hitbox for the giant
+  hitbox.scale.set(wf / sc, proto.scale / 1.75 / sc, wf / sc);
   hitbox.position.y = -proto.footOff + (proto.scale / 2) / sc;
   obj.add(hitbox);
 
@@ -663,8 +673,11 @@ function spawnEnemy(nearPos) {
     attackTimer: 0,
     dieTimer: 0,
     groanTimer: 2 + Math.random() * 8,
-    rise: 1.4,                       // seconds spent clawing out of the ground
-    lungeCd: 4 + Math.random() * 5,  // rush attack cooldown
+    rise: proto.boss ? 2.6 : 1.4,    // seconds spent clawing out of the ground
+    riseDur: proto.boss ? 2.6 : 1.4,
+    burial,
+    range: proto.boss ? 3.4 : 2.0,
+    lungeCd: proto.boss ? 1e9 : 4 + Math.random() * 5,  // the giant never runs — it doesn't need to
     lunging: 0,
   };
   hitbox.userData.enemy = enemy;
@@ -1370,7 +1383,7 @@ function update(dt) {
     // clawing out of the ground
     if (e.rise > 0) {
       e.rise -= dt;
-      p.y = terrainHeight(p.x, p.z) + e.footY - 2.4 * Math.max(e.rise, 0) / 1.4;
+      p.y = terrainHeight(p.x, p.z) + e.footY - e.burial * Math.max(e.rise, 0) / e.riseDur;
       if (Math.random() < dt * 6) {
         spawnBurst(new THREE.Vector3(p.x, terrainHeight(p.x, p.z) + 0.2, p.z),
           new THREE.Color(0x4a3a28), 4, 2.5, 0.6);
@@ -1389,20 +1402,20 @@ function update(dt) {
       e.attackTimer -= dt;
       if (e.attackTimer <= 0.45 && !e.didDamage) {
         e.didDamage = true;
-        if (dist < 2.8 && state.playing && !state.dead) damagePlayer(e.damage);
+        if (dist < e.range + 0.9 && state.playing && !state.dead) damagePlayer(e.damage);
       }
       if (e.attackTimer <= 0) {
         e.state = 'chase';
         if (e.actions.walk) e.actions.walk.reset().fadeIn(0.15).play();
       }
-    } else if (dist < 2.0 && !state.dead && state.playing) {
+    } else if (dist < e.range && !state.dead && state.playing) {
       e.state = 'attack';
       e.attackTimer = 0.95;
       e.didDamage = false;
       sfx.attack();
       if (e.actions.walk) e.actions.walk.fadeOut(0.1);
       if (e.actions.attack) e.actions.attack.reset().fadeIn(0.08).play();
-    } else if (dist < 120 && dist > 1.6 && !state.dead) {
+    } else if (dist < 120 && dist > e.range * 0.8 && !state.dead) {
       // shrieking rush: brief burst of unnatural speed
       let mul = 1;
       if (e.lunging > 0) {
@@ -1539,7 +1552,7 @@ Promise.all([plantForest(), loadSkeletons()])
   });
 
 // debug handle for automated tests
-window.__game = { scene, camera, renderer, terrain, state, enemies, protos, flashlight, __keys: keys };
+window.__game = { scene, camera, renderer, terrain, state, enemies, protos, flashlight, __keys: keys, spawnEnemy };
 window.__mission = mission;
 mission.genPos = GEN_POS;
 mission.kpInput = kpInput;
