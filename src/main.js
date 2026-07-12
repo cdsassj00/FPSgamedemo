@@ -969,12 +969,19 @@ const ui = {
   btnInteract: document.getElementById('btn-interact'),
   minimap: document.getElementById('minimap'),
 };
-// keypad buttons (clickable on touch and when the pointer is not locked)
+// keypad buttons — mouse click (pointer is released while the keypad is open)
+// and direct touch (bypasses the global look/stick touch handlers)
 document.querySelectorAll('.kp-btn').forEach((b) => {
-  b.addEventListener('click', () => {
+  const press = () => {
     if (b.dataset.k === 'close') kpClose();
     else kpInput(b.dataset.k);
-  });
+  };
+  b.addEventListener('click', press);
+  b.addEventListener('touchstart', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    press();
+  }, { passive: false });
 });
 
 function resetGame() {
@@ -1024,11 +1031,24 @@ function kpOpen() {
   keypad.buf = '';
   kpRender();
   document.getElementById('keypad').style.display = 'flex';
+  // free the mouse so the on-screen buttons are clickable (desktop)
+  if (document.pointerLockElement) {
+    keypad.relock = true;
+    document.exitPointerLock();
+  }
 }
 function kpClose() {
+  const wasOpen = keypad.open;
   keypad.open = false;
   const el = document.getElementById('keypad');
   if (el) el.style.display = 'none';
+  if (wasOpen && keypad.relock) {
+    keypad.relock = false;
+    // may be ignored outside a user gesture — the canvas click fallback re-locks
+    if (!document.pointerLockElement && state.playing) {
+      try { renderer.domElement.requestPointerLock(); } catch (e) { /* fallback below */ }
+    }
+  }
 }
 function kpInput(ch) {
   if (!keypad.open) return;
@@ -1092,11 +1112,23 @@ ui.playBtn.addEventListener('click', () => {
 });
 document.addEventListener('pointerlockchange', () => {
   if (IS_TOUCH) return;
+  // the keypad intentionally releases the mouse — keep playing, no pause menu
+  if (keypad.open) {
+    state.playing = true;
+    state.mouseDown = false;
+    return;
+  }
   state.playing = document.pointerLockElement === renderer.domElement;
   ui.overlay.classList.toggle('hidden', state.playing);
   if (!state.playing) {
     ui.playBtn.textContent = (state.dead || state.won) ? 'REDEPLOY' : 'RESUME';
     state.mouseDown = false;
+  }
+});
+// re-lock the mouse after the keypad released it
+renderer.domElement.addEventListener('mousedown', () => {
+  if (!IS_TOUCH && state.playing && !keypad.open && !document.pointerLockElement) {
+    renderer.domElement.requestPointerLock();
   }
 });
 
@@ -1109,7 +1141,7 @@ if (IS_TOUCH) {
   const onStart = (e) => {
     if (!state.playing) return;
     for (const t of e.changedTouches) {
-      if (t.target.closest && t.target.closest('.tbtn')) continue;
+      if (t.target.closest && t.target.closest('.tbtn, #keypad')) continue;
       if (t.clientX < innerWidth * 0.45 && touch.moveId === null) {
         touch.moveId = t.identifier;
         touch.origin = [t.clientX, t.clientY];
@@ -1187,7 +1219,7 @@ document.addEventListener('keydown', (e) => {
   if (keypad.open) {
     const m = e.code.match(/^(?:Digit|Numpad)([0-9])$/);
     if (m) kpInput(m[1]);
-    else if (e.code === 'Backspace') kpInput('back');
+    else if (e.code === 'Backspace') { e.preventDefault(); kpInput('back'); }
     else if (e.code === 'Escape') kpClose();
     return;
   }
